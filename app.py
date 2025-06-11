@@ -157,4 +157,4 @@ with chat_tab:
         st.session_state.chat_history.append({"role":"user","content":user_msg})
         reply = ai_chat(st.session_state.chat_history)
         st.session_state.chat_history.append({"role":"assistant","content":reply})
-        st.chat_message("assistant").markdown(reply)
+        st.chat_message("assistant").markdown(reply) 
