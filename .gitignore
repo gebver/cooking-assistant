@@ -4,10 +4,12 @@ venv/
 # Ignoruj ustawienia Streamlit
 .streamlit/secrets.toml
 
+# Ignoruj wszystko w folderze data,
+# ale wyłącz ignorowanie dla folderu i wybranych plików
 data/
+!data/
 !data/recipes.json
 !data/ingredients.json
-
 
 # Inne potencjalne pliki do ignorowania
 *.pyc
