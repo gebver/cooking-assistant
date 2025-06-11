@@ -4,8 +4,10 @@ venv/
 # Ignoruj ustawienia Streamlit
 .streamlit/secrets.toml
 
-# Ignoruj dane lokalne
 data/
+!data/recipes.json
+!data/ingredients.json
+
 
 # Inne potencjalne pliki do ignorowania
 *.pyc
