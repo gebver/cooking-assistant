@@ -32,6 +32,7 @@ embed_model, embed_index = init_vector_store(recipes)
 
 # --- OpenAI chat helper ---
 client = OpenAI(api_key=API_KEY, base_url="https://openrouter.ai/api/v1")
+
 def ai_chat(messages: list) -> str:
     try:
         resp = client.chat.completions.create(
@@ -43,7 +44,6 @@ def ai_chat(messages: list) -> str:
         st.error(f"Błąd API: {e}")
         return "[błąd generowania]"
 
-# --- Instruction generation with caching ---
 @lru_cache(maxsize=64)
 def generate_instructions(title: str, ingredients: str) -> str:
     prompt = [
@@ -59,7 +59,7 @@ def generate_instructions(title: str, ingredients: str) -> str:
 st.title("🍲 Twój kuchenny asystent AI 2.0")
 recipes_tab, chat_tab = st.tabs(["🔍 Przepisy", "💬 Chat"])
 
-# --- Przepisy Tab ---
+# --- Przepisy Tab (bez zmian) ---
 with recipes_tab:
     # Sidebar options
     st.sidebar.header("Ustawienia przepisów")
@@ -67,6 +67,15 @@ with recipes_tab:
         "Wybierz dietę", 
         ["dowolna", "wege", "keto", "niskotłuszczowa", "niskocukrowa"]
     )
+    
+    max_kcal = st.sidebar.slider(
+            "Maksymalna liczba kalorii",
+            min_value=0,
+            max_value=1000,
+            value=500,
+            step=10
+        )
+
     have = st.sidebar.multiselect(
         "Składniki, które masz", 
         options=all_ingredients
@@ -75,13 +84,11 @@ with recipes_tab:
         if not have:
             st.sidebar.warning("Wybierz przynajmniej jeden składnik.")
         else:
-            # 1. Dokładne dopasowania
             exact = get_available_recipes(have, recipes, diet)
             if exact:
                 st.subheader("Przepisy pasujące do Twoich składników")
                 seen = set()
                 for r in exact:
-                    # usuń numer z tytułu
                     title = re.sub(r"\s+\d+$", "", r['title'])
                     if title in seen:
                         continue
@@ -94,7 +101,6 @@ with recipes_tab:
             else:
                 st.warning("Brak dokładnych dopasowań.")
 
-            # 2. Częściowe dopasowania (maks. 2 brakujące)
             partial = get_missing_ingredients(have, recipes, diet)
             if partial:
                 st.subheader("Przepisy z brakującymi składnikami")
@@ -111,7 +117,6 @@ with recipes_tab:
                         instr = generate_instructions(title, r['ingredients'])
                         st.markdown(instr)
 
-            # 3. Sugestie AI: 3 różne kategorie
             st.divider()
             st.subheader("Sugestie AI")
             sims = query_similar_recipes(
@@ -138,23 +143,50 @@ with recipes_tab:
                 if count >= 3:
                     break
 
-# --- Chat Tab ---
+# --- Chat Tab z RAG ---
 with chat_tab:
     if 'chat_history' not in st.session_state:
         st.session_state.chat_history = [
-            {"role": "system", "content": (
-                "Jesteś pomocnym kuchennym asystentem AI."
-            )}
+            {"role": "system", "content": "Jesteś pomocnym kuchennym asystentem AI."}
         ]
-    # Display chat history
+    # Wyświetl historię czatu
     for msg in st.session_state.chat_history[1:]:
         with st.chat_message(msg['role']):
             st.markdown(msg['content'])
-    # User input
+    
+    # Wejście użytkownika
     user_msg = st.chat_input("Napisz do asystenta...")
+
     if user_msg:
         st.chat_message("user").markdown(user_msg)
-        st.session_state.chat_history.append({"role":"user","content":user_msg})
-        reply = ai_chat(st.session_state.chat_history)
-        st.session_state.chat_history.append({"role":"assistant","content":reply})
-        st.chat_message("assistant").markdown(reply) 
+        st.session_state.chat_history.append({"role": "user", "content": user_msg})
+
+        # --- RAG: pobierz podobne przepisy ---
+        similar_recipes = query_similar_recipes(
+            query=user_msg,
+            recipes=recipes,
+            model=embed_model,
+            index=embed_index,
+            top_k=3
+        )
+        # Zbuduj kontekst na podstawie podobnych przepisów
+        context_texts = []
+        for r in similar_recipes:
+            context_texts.append(f"Przepis: {r['title']}\nSkładniki: {r['ingredients']}\nOpis: {r.get('description', '')}")
+
+        context_str = "\n\n".join(context_texts) if context_texts else "Brak podobnych przepisów."
+
+        # Stwórz prompt dla modelu z kontekstem
+        messages = [
+            {"role": "system", "content": "Jesteś pomocnym kuchennym asystentem AI. Odpowiadasz po polsku." 
+                                          "Udzielaj odpowiedzi bazując na dostępnych przepisach:"},
+            {"role": "system", "content": context_str},
+            *st.session_state.chat_history[1:],  # dodaj historię od użytkownika
+            {"role": "user", "content": user_msg}
+        ]
+
+        # Wywołaj model z rozszerzonym kontekstem
+        reply = ai_chat(messages)
+
+        st.session_state.chat_history.append({"role": "assistant", "content": reply})
+        st.chat_message("assistant").markdown(reply)
